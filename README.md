@@ -19,10 +19,10 @@ Keywords: _TTY, readline, line editing, user input_
 
 
 **Example**
-  
-    import pytt
-    name = pytt.readline("Enter your name: ")
-    pytt.clear() # Clear prompt and user input from the screen
-    print "Hello %s!" % name
 
-  
+```python
+import pytt
+name = pytt.readline("Enter your name: ")
+pytt.clear() # Clear prompt and user input from the screen
+print "Hello %s!" % name
+```
