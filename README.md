@@ -9,7 +9,6 @@ Interactive user input for Python (replacement for `input_raw`).
 Keywords: _TTY, readline, line editing, user input_
 
 **Features**
-- Unix only
 - UTF-8 support (including proper displaying of Asian double-width characters)
 - Backspace, Delete, Inserting text
 - Moving the cursor
@@ -17,6 +16,11 @@ Keywords: _TTY, readline, line editing, user input_
   - CTRL+A, CTRL+E to go to Start en End of line (as in Emacs)
   - HOME and END
 
+**Missing Features**
+- Windows support
+- Some other shortcuts like ctrl+left to jump word by word
+- Multiline editing
+- Autocompletion
 
 **Example**
 
