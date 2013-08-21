@@ -1,36 +1,84 @@
 #!/usr/bin/python2.7
 import termios,sys,tty,select,unicodedata
 
+class EscapeSequence(Exception):
+	pass
 
 class Pytt:
 	def __init__(self):
 		import sys
-		self.stdin	= sys.stdin
-		self.stdout	= sys.stdout
-		self.buffer	= u''
+		self.stdin		= sys.stdin
+		self.stdout		= sys.stdout
+		self.buffer		= u''
 		self.lastbuffer	= u''
-		self.cursor	= 0
-		self.mode	= 'insert'
-		self.prompt	= u''
+		self.cursor		= 0
+		self.mode		= 'insert'
+		self.prompt		= u''
+		self.selection	= 0
+		self.settings = {
+			"selection.color": u'\33[7;4m'
+		}
+		self.colors = {
+			"reset": u'\33[0m'
+		}
+		self.sequences = {
+			"\33": {
+				"[": {
+					"D": "LEFT",
+					"C": "RIGHT",
+					"H": "HOME",
+					"F": "END",
+					"3": {
+						"~": "DEL"
+					},
+					"1": {
+						";": {
+							"1": {
+								"0": {
+									"D": "SHIFT+ALT+LEFT",
+									"C": "SHIFT+ALT+RIGHT"
+								}
+							},
+							"2": {
+								"D": "SHIFT+LEFT",
+								"C": "SHIFT+RIGHT"
+							}
+						}
+					}
+				}
+			}
+		}
 
 	def head(self):
 		return self.buffer[:self.cursor]
 	def tail(self):
 		return self.buffer[self.cursor:]
 
-	def moveCursor(self, position):
+	def moveCursor(self, position, selection=0):
 		stdout = self.stdout
 		buffer = self.buffer
+		if self.selection != 0 and selection == 0:
+			# Clear selection
+			self.selection = 0
+			pass
+
 		# Move Right
 		if self.cursor < position and self.cursor < len(buffer):
 			nchars = position - self.cursor
 			stdout.write(buffer[self.cursor:position].encode('UTF-8'))
 			self.cursor = position
+			return True
 		# Move Left
 		elif position < self.cursor and self.cursor > 0:
+			i = 0
 			for char in buffer[position:self.cursor]:
+				if i < selection:
+					stdout.write( ('\b' + self.settings['selection.color'] + char + u'\33[0m').encode('UTF-8') )
 				stdout.write( self.charWidth(char) * '\b' )
+				i+=1
 			self.cursor = position
+			self.selection = selection
+			return True
 		else:
 			stdout.write('\7')
 	def insert(self, string, position=None):
@@ -57,6 +105,12 @@ class Pytt:
 		else:
 			raise Exception("Unknown Character Width")
 
+	def strWidth(self, s):
+		width = 0
+		for char in s:
+			width += self.charWidth(char)
+		return width
+
 	def _initterm(self):
 		self.termbackup = termios.tcgetattr(sys.stdin)
 		tty.setcbreak(sys.stdin.fileno())
@@ -77,7 +131,6 @@ class Pytt:
 		self._initterm()
 		stdout = self.stdout
 		stdin = self.stdin
-		state = None
 
 		if prompt:
 			stdout.write(prompt)
@@ -99,43 +152,49 @@ class Pytt:
 				self.cursor+=1
 			# Backspace
 			elif n == 127:
-				if self.cursor > 0:
-					delwidth = self.charWidth(head[-1])
-					stdout.write(delwidth*'\b') # Move cursor back
-					stdout.write(tail.encode('UTF-8')) # Rewrite tail
-					lastwidth = self.charWidth(buffer[-1])
-					stdout.write(lastwidth*' ') # Write space at end
-					stdout.write(lastwidth*'\b')
+				if self.selection == 0:
+					if self.cursor > 0:
+						delwidth = self.charWidth(head[-1])
+						stdout.write(delwidth*'\b') # Move cursor back
+						stdout.write(tail.encode('UTF-8')) # Rewrite tail
+						lastwidth = self.charWidth(buffer[-1])
+						stdout.write(lastwidth*' ') # Write space at end
+						stdout.write(lastwidth*'\b')
 					
-					for char in tail:
-						width = self.charWidth(char)
-						stdout.write(width*'\b')
+						for char in tail:
+							width = self.charWidth(char)
+							stdout.write(width*'\b')
 				
-					self.buffer = head[:-1] + tail
-					self.cursor-=1
-				else:
-					stdout.write('\7')
+						self.buffer = head[:-1] + tail
+						self.cursor-=1
+					else:
+						stdout.write('\7')
+				if self.selection > 0:
+					selectionstr	= buffer[self.cursor:self.selection]
+					tailwidth		= self.strWidth(tail)
+					ntail			= tail[self.selection:]
+					ntailwidth		= self.strWidth(ntail)
+					stdout.write(tailwidth * ' ' + tailwidth * '\b')
+					stdout.write(ntail.encode('UTF-8'))
+					stdout.write(ntailwidth * '\b')
+					self.buffer = head + ntail
 			# Escape
-			elif n == 27:
+			elif c == '\33':
 				c = self.stdin.read(1)
 				if c == '[':
 					c2 = self.stdin.read(1)
 					# LEFT
 					if c2 == 'D':
 						self.moveCursor(self.cursor-1)
-						state = None
 					# RIGHT
 					elif c2 == 'C':
 						self.moveCursor(self.cursor+1)
-						state = None
 					# HOME
 					elif c2 == 'H':
 						self.moveCursor(0)
-						state = None
 					# END
 					elif c2 == 'F':
 						self.moveCursor(len(buffer))
-						state = None
 					# EXTRA ESCAPE
 					elif c2 == '3':
 						c3 = self.stdin.read(1)
@@ -152,11 +211,34 @@ class Pytt:
 								stdout.write('\7')
 							self.buffer = head + tail[1:]
 						else:
-							print 'Unknown escape code 3:', c+c2+c3
+							print 'Unknown escape code 3:', repr(c+c2+c3)
 					# SELECT
+					elif c2 == '1':
+						c3 = self.stdin.read(1)
+						if c3 == ';':
+							c4 = self.stdin.read(1)
+							if c4 == '1':
+								c5 = self.stdin.read(1)
+								if c5 == '0':
+									print "Alt+Shift+Left"
+								else:
+									print repr(c+c2+c3+c4+c5)
+							elif c4 == '2':
+								c5 = self.stdin.read(1)
+								if c5 == 'D':
+									# Select Left
+									self.moveCursor(self.cursor-1, self.selection+1)
+								elif c5 == 'C':
+									# Select Right
+									self.moveCursor(self.cursor+1, self.selection-1)
+								else:
+									raise EscapeSequence(c+c2+c3+c4+c5)
+							else:
+								print 'Unkown selection escape sequence', repr(c+c2+c3+c4)
+						else:
+							print 'Unknown escape code 3', repr(c+c2+c3)
 					else:
-						print 'Unknown escape code 2:', c+c2
-						state = None
+						print 'Unknown escape code 2:', repr(c+c2)
 				elif c == '\x1b':
 					c2 = self.stdin.read(1)
 					if c2 == '[':
