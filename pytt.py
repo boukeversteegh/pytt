@@ -152,13 +152,33 @@ class Pytt:
 								stdout.write('\7')
 							self.buffer = head + tail[1:]
 						else:
-							print 'Unknown escape code:', c+c2+c3
+							print 'Unknown escape code 3:', c+c2+c3
 					# SELECT
 					else:
-						print 'Unknown escape code:', c+c2
+						print 'Unknown escape code 2:', c+c2
 						state = None
+				elif c == '\x1b':
+					c2 = self.stdin.read(1)
+					if c2 == '[':
+						c3 = self.stdin.read(1)
+						if c3 == 'D':
+							# Alt+Left
+							wordboundary = self.buffer[:self.cursor].rfind(' ')
+							if wordboundary < 0:
+								wordboundary = 0
+							self.moveCursor(wordboundary)
+						elif c3 == 'C':
+							# Alt-Right
+							wordboundary = self.buffer.find(' ',self.cursor+1)
+							if wordboundary < 0:
+								wordboundary = len(self.buffer)
+							self.moveCursor(wordboundary)
+						else:
+							print 'Unknown escape code 3:', repr(c+c2+c3)
+					else:
+						print 'Unknown escape code 2', repr(c+c2)
 				else:
-					print 'Unkown escape code:', c
+					print 'Unkown escape code 1:', repr(c)
 			# Home CTRL-A
 			elif n == 1:
 				self.moveCursor(0)
