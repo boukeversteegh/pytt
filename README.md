@@ -18,7 +18,6 @@ Keywords: _TTY, readline, line editing, user input_
 
 **Missing Features**
 - Windows support
-- Some other shortcuts like ctrl+left to jump word by word
 - Multiline editing
 - Autocompletion
 
