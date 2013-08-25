@@ -22,6 +22,10 @@ class Pytt:
 			"reset": u'\33[0m'
 		}
 		self.sequences = {
+			"\1":	"HOME",
+			"\4":	"EOF",
+			"\5":	"END",
+			"\n":	"RETURN",
 			"\33": {
 				"[": {
 					"D": "LEFT",
@@ -35,18 +39,25 @@ class Pytt:
 						";": {
 							"1": {
 								"0": {
-									"D": "SHIFT+ALT+LEFT",
-									"C": "SHIFT+ALT+RIGHT"
+									"D": "SELECT_WORD_LEFT",
+									"C": "SELECT_WORD_RIGHT"
 								}
 							},
 							"2": {
-								"D": "SHIFT+LEFT",
-								"C": "SHIFT+RIGHT"
+								"D": "SELECT_LEFT",
+								"C": "SELECT_RIGHT"
 							}
 						}
 					}
+				},
+				"\33": {
+					"[": {
+						"D":	"WORD_LEFT",
+						"C":	"WORD_RIGHT"
+					}
 				}
-			}
+			},
+			"\x7f":	"BACKSPACE"
 		}
 
 	def head(self):
@@ -59,23 +70,52 @@ class Pytt:
 		buffer = self.buffer
 		if self.selection != 0 and selection == 0:
 			# Clear selection
+			if self.selection > 0:
+				seltail = self.buffer[self.cursor:self.cursor+self.selection]
+				for char in seltail:
+					stdout.write(char)
+				for char in seltail:
+					stdout.write('\b'*self.charWidth(char))
+			if self.selection < 0:
+				selhead = self.buffer[self.cursor+self.selection:self.cursor]
+				for char in selhead:
+					stdout.write('\b'*self.charWidth(char))
+				for char in selhead:
+					stdout.write(char)
 			self.selection = 0
 			pass
 
+		# Don't move
+		if self.cursor == position and selection == 0:
+			return True
 		# Move Right
-		if self.cursor < position and self.cursor < len(buffer):
-			nchars = position - self.cursor
+		elif self.cursor < position and self.cursor < len(buffer):
+			if selection < 0: #== self.cursor - position:
+				stdout.write(self.settings['selection.color'])
 			stdout.write(buffer[self.cursor:position].encode('UTF-8'))
+			if selection < 0:# == self.cursor - position:
+				stdout.write('\33[0m')
 			self.cursor = position
+			self.selection = selection
 			return True
 		# Move Left
 		elif position < self.cursor and self.cursor > 0:
-			i = 0
-			for char in buffer[position:self.cursor]:
-				if i < selection:
-					stdout.write( ('\b' + self.settings['selection.color'] + char + u'\33[0m').encode('UTF-8') )
-				stdout.write( self.charWidth(char) * '\b' )
-				i+=1
+			stdout.write(self.strWidth(self.buffer[position:self.cursor])*'\b')
+			
+			if selection > 0:
+				stdout.write( self.settings['selection.color'] )
+				selstr = self.buffer[position:self.cursor]
+				#stdout.write( self.strWidth(selstr) * '\b' )
+				stdout.write( selstr.encode('UTF-8'))
+				stdout.write( self.strWidth(selstr) * '\b' )
+				stdout.write( '\33[0m' )
+			#i = 0
+			#for char in buffer[position:self.cursor]:
+			#	#if i < selection:
+			#		stdout.write( ('\b' + self.settings['selection.color'] + char + u'\33[0m').encode('UTF-8') )
+			#	stdout.write( char )
+			#	i+=1
+			#stdout.write( self.strWidth())
 			self.cursor = position
 			self.selection = selection
 			return True
@@ -125,6 +165,19 @@ class Pytt:
 			self._resetterm()
 			raise
 
+	def wordLeft(self, cursor):
+		wordboundary = max(0, self.buffer[:self.cursor-1].rfind(' ')+1)
+		return wordboundary
+
+	def wordRight(self, cursor):
+		wordboundary = self.buffer.find(' ', self.cursor+1)
+		if wordboundary < 0:
+			wordboundary = len(self.buffer)
+		else:
+			wordboundary += 1
+		return wordboundary
+				
+
 	def _read(self, singleline=False, prompt=None):
 		self.buffer = u''
 		self.cursor = 0
@@ -150,127 +203,103 @@ class Pytt:
 				for char in tail:
 					stdout.write(self.charWidth(char)*'\b')
 				self.cursor+=1
-			# Backspace
-			elif n == 127:
-				if self.selection == 0:
-					if self.cursor > 0:
-						delwidth = self.charWidth(head[-1])
-						stdout.write(delwidth*'\b') # Move cursor back
-						stdout.write(tail.encode('UTF-8')) # Rewrite tail
-						lastwidth = self.charWidth(buffer[-1])
-						stdout.write(lastwidth*' ') # Write space at end
-						stdout.write(lastwidth*'\b')
-					
-						for char in tail:
-							width = self.charWidth(char)
-							stdout.write(width*'\b')
-				
-						self.buffer = head[:-1] + tail
-						self.cursor-=1
-					else:
-						stdout.write('\7')
-				if self.selection > 0:
-					selectionstr	= buffer[self.cursor:self.selection]
-					tailwidth		= self.strWidth(tail)
-					ntail			= tail[self.selection:]
-					ntailwidth		= self.strWidth(ntail)
-					stdout.write(tailwidth * ' ' + tailwidth * '\b')
-					stdout.write(ntail.encode('UTF-8'))
-					stdout.write(ntailwidth * '\b')
-					self.buffer = head + ntail
 			# Escape
-			elif c == '\33':
-				c = self.stdin.read(1)
-				if c == '[':
-					c2 = self.stdin.read(1)
-					# LEFT
-					if c2 == 'D':
+			elif c in self.sequences:
+				s = c
+				sequence = self.sequences
+				while c in sequence:
+					sequence = sequence[c]
+					if type(sequence) == dict:
+						c = self.stdin.read(1)
+						s += c
+					else:
+						break
+				if type(sequence) == dict:
+					print 'Unknown sequence: ', repr(s)
+				else:
+					if sequence == 'LEFT':
 						self.moveCursor(self.cursor-1)
-					# RIGHT
-					elif c2 == 'C':
+					elif sequence == 'RIGHT':
 						self.moveCursor(self.cursor+1)
-					# HOME
-					elif c2 == 'H':
+					elif sequence == 'HOME':
 						self.moveCursor(0)
-					# END
-					elif c2 == 'F':
+					elif sequence == 'END':
 						self.moveCursor(len(buffer))
-					# EXTRA ESCAPE
-					elif c2 == '3':
-						c3 = self.stdin.read(1)
-						# DEL
-						if c3 == '~':
-							if self.cursor < len(buffer):
-								stdout.write(tail[1:])
-								lastwidth = self.charWidth(tail[-1])
-								stdout.write(lastwidth*' ')
+					elif sequence == 'EOF':
+						return self.buffer
+					elif sequence == 'RETURN':
+						if singleline:
+							break
+						else:
+							self.buffer += "\n"
+							stdout.write("\n")
+					elif sequence == 'DEL':
+						if self.cursor < len(buffer):
+							stdout.write(tail[1:])
+							lastwidth = self.charWidth(tail[-1])
+							stdout.write(lastwidth*' ')
+							stdout.write(lastwidth*'\b')
+							for char in tail[1:]:
+								stdout.write(self.charWidth(char)*'\b')
+						else:
+							stdout.write('\7')
+						self.buffer = head + tail[1:]
+					elif sequence == 'SELECT_LEFT':
+						self.moveCursor(self.cursor-1, self.selection+1)
+					elif sequence == 'SELECT_RIGHT':
+						self.moveCursor(self.cursor+1, self.selection-1)
+					elif sequence == 'WORD_LEFT':
+						wordboundary = self.wordLeft(self.cursor)
+						self.moveCursor(wordboundary)
+					elif sequence == 'WORD_RIGHT':
+						wordboundary = self.wordRight(self.cursor)
+						self.moveCursor(wordboundary)
+					elif sequence == 'SELECT_WORD_LEFT':
+						wordboundary = self.wordLeft(self.cursor) 
+						self.moveCursor(wordboundary, self.cursor+self.selection-wordboundary)
+					elif sequence == 'SELECT_WORD_RIGHT':	
+						wordboundary = self.wordRight(self.cursor)
+						self.moveCursor(wordboundary, wordboundary - self.cursor)
+					elif sequence == 'BACKSPACE':
+						if self.selection == 0:
+							if self.cursor > 0:
+								delwidth = self.charWidth(head[-1])
+								stdout.write(delwidth*'\b') # Move cursor back
+								stdout.write(tail.encode('UTF-8')) # Rewrite tail
+								lastwidth = self.charWidth(buffer[-1])
+								stdout.write(lastwidth*' ') # Write space at end
 								stdout.write(lastwidth*'\b')
-								for char in tail[1:]:
-									stdout.write(self.charWidth(char)*'\b')
+					
+								for char in tail:
+									width = self.charWidth(char)
+									stdout.write(width*'\b')
+				
+								self.buffer = head[:-1] + tail
+								self.cursor-=1
 							else:
 								stdout.write('\7')
-							self.buffer = head + tail[1:]
 						else:
-							print 'Unknown escape code 3:', repr(c+c2+c3)
-					# SELECT
-					elif c2 == '1':
-						c3 = self.stdin.read(1)
-						if c3 == ';':
-							c4 = self.stdin.read(1)
-							if c4 == '1':
-								c5 = self.stdin.read(1)
-								if c5 == '0':
-									print "Alt+Shift+Left"
-								else:
-									print repr(c+c2+c3+c4+c5)
-							elif c4 == '2':
-								c5 = self.stdin.read(1)
-								if c5 == 'D':
-									# Select Left
-									self.moveCursor(self.cursor-1, self.selection+1)
-								elif c5 == 'C':
-									# Select Right
-									self.moveCursor(self.cursor+1, self.selection-1)
-								else:
-									raise EscapeSequence(c+c2+c3+c4+c5)
+							if self.selection < 0:
+								selectionstr = self.buffer[self.cursor+self.selection:self.cursor]
+								#stdout.write(self.strWidth(selectionstr)*'\b')
+								head = self.buffer[:self.cursor+self.selection]
+								tailwidth = self.strWidth(self.buffer[self.cursor:])
+								selwidth = self.strWidth(selectionstr)
+								stdout.write(tailwidth * ' ' + (selwidth+tailwidth) * '\b' + selwidth * ' ' + selwidth * '\b')
+								ntail = tail
+								self.cursor = self.cursor+self.selection
 							else:
-								print 'Unkown selection escape sequence', repr(c+c2+c3+c4)
-						else:
-							print 'Unknown escape code 3', repr(c+c2+c3)
+								selectionstr	= buffer[self.cursor:self.cursor+self.selection]
+								tailwidth		= self.strWidth(tail)
+								ntail			= tail[self.selection:]
+								stdout.write(tailwidth * ' ' + tailwidth * '\b')
+							ntailwidth		= self.strWidth(ntail)
+							stdout.write(ntail.encode('UTF-8'))
+							stdout.write(ntailwidth * '\b')
+							self.buffer = head + ntail
+							self.selection = 0
 					else:
-						print 'Unknown escape code 2:', repr(c+c2)
-				elif c == '\x1b':
-					c2 = self.stdin.read(1)
-					if c2 == '[':
-						c3 = self.stdin.read(1)
-						if c3 == 'D':
-							# Alt+Left
-							wordboundary = self.buffer[:self.cursor].rfind(' ')
-							if wordboundary < 0:
-								wordboundary = 0
-							self.moveCursor(wordboundary)
-						elif c3 == 'C':
-							# Alt-Right
-							wordboundary = self.buffer.find(' ',self.cursor+1)
-							if wordboundary < 0:
-								wordboundary = len(self.buffer)
-							self.moveCursor(wordboundary)
-						else:
-							print 'Unknown escape code 3:', repr(c+c2+c3)
-					else:
-						print 'Unknown escape code 2', repr(c+c2)
-				else:
-					print 'Unkown escape code 1:', repr(c)
-			# Home CTRL-A
-			elif n == 1:
-				self.moveCursor(0)
-			# End CTRL-E
-			elif n == 5:
-				self.moveCursor(len(buffer))
-			# EOF CTRL-D
-			elif n == 4:
-				return buffer
-			# UTF8
+						print 'Unimplemented:', repr(sequence)
 			elif n > 127:
 				
 				def getmbchar():
@@ -298,16 +327,9 @@ class Pytt:
 					for char in tail:
 						stdout.write(self.charWidth(char)*'\b')
 					self.insert(mbchar.decode('UTF-8'))
-			# ENTER
-			elif n == 10:
-				if singleline:
-					break
-				else:
-					self.buffer += "\n"
-					stdout.write("\n")
 			else:
 				stdout.write(tail.encode('UTF-8')+' ')
-				print '\033[31mNon Printable\033[0m:', n, repr(self.buffer), '@',self.cursor
+				print '\033[31mNon Printable\033[0m:', n, repr(c), repr(self.buffer), '@',self.cursor
 				stdout.write(self.buffer.encode('UTF-8'))
 				for char in tail:
 					width = self.charWidth(char)
